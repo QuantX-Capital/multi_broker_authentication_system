@@ -23,6 +23,8 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
         self.client_id = secret.get("client_id")
         self.secret_key = secret["secret_key"]
         self.access_token = secret.get("access_token") or None
+        self.user_id = secret.get("user_id") or self.client_id
+        self.password = secret.get("password")
 
         if not self.client_id:
             raise ValueError(
@@ -70,14 +72,26 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
         return access_token
 
     def login_via_browser(self, timeout=180, poll_interval=1):
-        """Opens a Selenium-driven browser for you to log in. Once MasterTrust
+        """Opens a Selenium-driven browser, auto-fills the client ID/password if
+        available, and waits for you to complete the OTP step. Once MasterTrust
         redirects back with an authorization code in the URL, it's captured
         automatically and exchanged for an access token."""
         from selenium import webdriver
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
 
         driver = webdriver.Chrome()
         try:
             driver.get(self.get_login_url())
+
+            if self.user_id and self.password:
+                WebDriverWait(driver, 20).until(
+                    EC.presence_of_element_located((By.ID, "lgnusrid"))
+                )
+                driver.find_element(By.ID, "lgnusrid").send_keys(self.user_id)
+                driver.find_element(By.ID, "lgnpwd").send_keys(self.password)
+                driver.find_element(By.CLASS_NAME, "lgnBtnClss").click()
 
             auth_code = None
             elapsed = 0

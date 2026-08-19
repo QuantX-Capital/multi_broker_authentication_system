@@ -1,4 +1,7 @@
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 
 from zerodha import ZerodhaAuthenticator
 from mastertrust import MasterTrustAuthenticator
@@ -9,6 +12,14 @@ BROKER_REGISTRY = {
     "zerodha": ZerodhaAuthenticator,
     "mastertrust": MasterTrustAuthenticator,
 }
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "authentication_application"
+
+
+@app.get("/brokers")
+def list_brokers():
+    """Returns the broker keys the frontend can offer for authentication."""
+    return {"brokers": list(BROKER_REGISTRY)}
 
 
 @app.post("/authenticate/{broker}")
@@ -34,3 +45,7 @@ def authenticate(broker: str):
         "broker": broker.lower(),
         "access_token": auth.access_token,
     }
+
+
+# Mounted last so it never shadows the API routes above.
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
