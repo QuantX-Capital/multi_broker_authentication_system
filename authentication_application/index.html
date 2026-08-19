@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Broker Auth Console</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="page-header">
+      <h1>Broker Auth Console</h1>
+      <p class="subtitle">Trigger a broker login flow and capture the access token.</p>
+    </header>
+
+    <section id="broker-list" class="broker-list" aria-live="polite">
+      <p class="status-line">Loading brokers…</p>
+    </section>
+
+    <section id="log-panel" class="log-panel" hidden>
+      <h2>Activity</h2>
+      <ul id="log-list" class="log-list"></ul>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

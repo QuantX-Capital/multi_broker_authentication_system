@@ -13,7 +13,7 @@ BROKER_REGISTRY = {
     "mastertrust": MasterTrustAuthenticator,
 }
 
-FRONTEND_DIR = Path(__file__).resolve().parent.parent / "authentication_application"
+FRONTEND_DIR = Path(__file__).resolve().parent / "authentication_application"
 
 
 @app.get("/brokers")
