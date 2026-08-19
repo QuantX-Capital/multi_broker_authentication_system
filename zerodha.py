@@ -5,9 +5,10 @@ from urllib.parse import urlparse, parse_qs
 
 import boto3
 import requests
+from base_authenticator import BrokerAuthenticator
 
 
-class ZerodhaAuthenticator:
+class ZerodhaAuthenticator(BrokerAuthenticator):
     """Handles Zerodha Kite Connect login, backed by an AWS Secrets Manager secret."""
 
     LOGIN_URL = "https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
