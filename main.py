@@ -7,9 +7,9 @@ app = FastAPI(title="Zerodha Auth Service")
 
 @app.post("/authenticate")
 def authenticate():
-    """Runs the full login flow in one shot: opens a browser for you to log in,
-    captures the redirect, exchanges the token, and saves it to Secrets Manager
-    and kite_token.json."""
+    """Runs the full login flow in one shot: opens a browser, auto-fills
+    credentials, waits for OTP, captures the redirect, exchanges the token,
+    and saves it to Secrets Manager."""
     auth = ZerodhaAuthenticator()
     try:
         auth.authenticate()
@@ -19,5 +19,4 @@ def authenticate():
     return {
         "status": "success",
         "access_token": auth.access_token,
-        "saved_to": auth.local_token_file,
     }

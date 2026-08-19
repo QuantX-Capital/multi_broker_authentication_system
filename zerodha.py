@@ -1,7 +1,6 @@
 import json
 import hashlib
 import time
-from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 import boto3
@@ -15,11 +14,9 @@ class ZerodhaAuthenticator:
     TOKEN_URL = "https://api.kite.trade/session/token"
     PROFILE_URL = "https://api.kite.trade/user/profile"
 
-    def __init__(self, secret_id="/trading/brokers/zerodha/luv", region_name="ap-south-1",
-                 local_token_file="kite_token.json"):
+    def __init__(self, secret_id="/trading/brokers/zerodha/luv", region_name="ap-south-1"):
         self.secret_id = secret_id
         self.client = boto3.client("secretsmanager", region_name=region_name)
-        self.local_token_file = local_token_file
 
         secret = self._get_secret()
         self.api_key = secret["api_key"]
@@ -66,18 +63,7 @@ class ZerodhaAuthenticator:
         access_token = data["data"]["access_token"]
         self.access_token = access_token
         self._update_secret(access_token)
-        self._save_local_token(access_token)
         return access_token
-
-    def _save_local_token(self, access_token):
-        token_data = {
-            "api_key": self.api_key,
-            "access_token": access_token,
-            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "generated_date": datetime.now().strftime("%Y-%m-%d"),
-        }
-        with open(self.local_token_file, "w") as f:
-            json.dump(token_data, f, indent=4)
 
     def login_via_browser(self, timeout=180, poll_interval=1):
         """Opens a Selenium-driven browser, auto-fills the user ID/password if
