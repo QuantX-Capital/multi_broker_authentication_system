@@ -1,0 +1,5 @@
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+boto3==1.43.74
+requests==2.34.2
+selenium==4.47.0
