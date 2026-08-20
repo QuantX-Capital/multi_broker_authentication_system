@@ -3,14 +3,31 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Broker Auth Console</title>
+  <meta name="theme-color" content="#0f1115" />
+  <title>Quantengine · Broker Auth Console</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <main class="page">
     <header class="page-header">
-      <h1>Broker Auth Console</h1>
-      <p class="subtitle">Trigger a broker login flow and complete it right here.</p>
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
+          <defs>
+            <linearGradient id="brand-gradient" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#6b91ff" />
+              <stop offset="100%" stop-color="#3d63e0" />
+            </linearGradient>
+          </defs>
+          <rect width="64" height="64" rx="16" fill="url(#brand-gradient)" />
+          <text x="32" y="45" text-anchor="middle">Q</text>
+        </svg>
+        <div class="brand-text">
+          <span class="brand-name">Quantengine</span>
+          <h1>Broker Auth Console</h1>
+        </div>
+      </div>
+      <p class="subtitle">Authenticate a broker and complete the login right here.</p>
     </header>
 
     <section id="broker-list" class="broker-list" aria-live="polite">
@@ -21,6 +38,10 @@
       <h2>Activity</h2>
       <ul id="log-list" class="log-list"></ul>
     </section>
+
+    <footer class="page-footer">
+      <p>Quantengine &middot; internal use only. Credentials are used once, never stored.</p>
+    </footer>
   </main>
 
   <div id="auth-overlay" class="auth-overlay" hidden>

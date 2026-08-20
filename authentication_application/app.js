@@ -46,11 +46,13 @@ function renderBrokers(brokers) {
     const card = document.createElement("div");
     card.className = "broker-card";
     card.id = `card-${broker}`;
+    card.dataset.status = "idle";
 
     card.innerHTML = `
+      <div class="broker-avatar" aria-hidden="true">${broker.charAt(0).toUpperCase()}</div>
       <div class="broker-info">
         <h3>${broker}</h3>
-        <p class="broker-status">Not authenticated</p>
+        <p class="broker-status"><span class="status-dot"></span>Not authenticated</p>
       </div>
       <button class="auth-btn" data-broker="${broker}">Authenticate</button>
     `;
@@ -74,9 +76,14 @@ async function loadBrokers() {
   }
 }
 
-function updateBrokerCard(broker, text) {
+function updateBrokerCard(broker, text, status) {
   const card = document.getElementById(`card-${broker}`);
-  if (card) card.querySelector(".broker-status").textContent = text;
+  if (!card) return;
+  if (status) card.dataset.status = status;
+  const statusEl = card.querySelector(".broker-status");
+  statusEl.innerHTML = "";
+  statusEl.appendChild(Object.assign(document.createElement("span"), { className: "status-dot" }));
+  statusEl.appendChild(document.createTextNode(text));
 }
 
 function showStatus(text, kind) {
@@ -129,7 +136,7 @@ credentialsForm.addEventListener("submit", async (event) => {
 
   setFormBusy(credentialsForm, true);
   showStatus("Starting secure browser…");
-  updateBrokerCard(broker, "Starting…");
+  updateBrokerCard(broker, "Starting…", "busy");
   logEvent(`Starting authentication for "${broker}"…`);
 
   let res, data;
@@ -158,7 +165,7 @@ credentialsForm.addEventListener("submit", async (event) => {
     otpForm.hidden = false;
     setFormBusy(otpForm, false);
     showStatus("OTP required — check your device and enter it below.");
-    updateBrokerCard(broker, "Waiting for OTP…");
+    updateBrokerCard(broker, "Waiting for OTP…", "busy");
     otpInput.focus();
   } else if (data.status === "authenticated") {
     succeed(broker);
@@ -216,21 +223,21 @@ cancelBtn.addEventListener("click", async () => {
     }
   }
 
-  updateBrokerCard(broker, "Cancelled");
+  updateBrokerCard(broker, "Cancelled", "idle");
   logEvent(`"${broker}" authentication cancelled.`);
   setBrokerButtonsDisabled(false);
   closeModal();
 });
 
 function succeed(broker) {
-  updateBrokerCard(broker, "Authenticated");
+  updateBrokerCard(broker, "Authenticated", "success");
   logEvent(`"${broker}" authenticated successfully.`, "success");
   setBrokerButtonsDisabled(false);
   closeModal();
 }
 
 function fail(broker, error) {
-  updateBrokerCard(broker, "Authentication failed");
+  updateBrokerCard(broker, "Authentication failed", "failed");
   logEvent(`"${broker}" failed: ${error || "unknown error"}`, "error");
   setBrokerButtonsDisabled(false);
   closeModal();
