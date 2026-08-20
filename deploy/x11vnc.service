@@ -5,7 +5,7 @@ Requires=xvfb.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/x11vnc -display :99 -forever -shared -rfbport 5900 -rfbauth /etc/x11vnc.pass
+ExecStart=/usr/bin/x11vnc -display :99 -forever -shared -rfbport 5900 -localhost -nopw
 Restart=on-failure
 RestartSec=5
 

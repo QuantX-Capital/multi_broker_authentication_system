@@ -68,14 +68,6 @@ body {
   color: var(--text-dim);
 }
 
-.broker-token {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.78rem;
-  color: var(--success);
-  word-break: break-all;
-  max-width: 260px;
-}
-
 .auth-btn {
   flex-shrink: 0;
   background: var(--accent);
@@ -147,4 +139,85 @@ body {
 .log-time {
   color: var(--text-dim);
   margin-right: 8px;
+}
+
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 7, 10, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 10;
+}
+
+.auth-overlay[hidden] {
+  display: none;
+}
+
+.auth-modal {
+  width: 100%;
+  max-width: 860px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+.auth-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.auth-modal-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  text-transform: capitalize;
+}
+
+.cancel-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.cancel-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.auth-modal-status {
+  margin: 0 0 16px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.vnc-container {
+  width: 100%;
+  min-height: 480px;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.vnc-error {
+  color: var(--error);
+  font-size: 0.85rem;
+  padding: 16px;
+  margin: 0;
+}
+
+.vnc-hint {
+  margin: 12px 0 0;
+  color: var(--text-dim);
+  font-size: 0.8rem;
 }

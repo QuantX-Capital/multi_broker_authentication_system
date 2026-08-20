@@ -16,6 +16,7 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
     TOKEN_URL = "https://midlive.mastertrust.co.in/NorenWClientAPI/GenAcsTok"
 
     def __init__(self, secret_id="/trading/brokers/mastertrust/vaibhav", region_name="ap-south-1"):
+        super().__init__()
         self.secret_id = secret_id
         self.client = boto3.client("secretsmanager", region_name=region_name)
 
@@ -71,7 +72,7 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
         self._update_secret(access_token, data.get("refresh_token"))
         return access_token
 
-    def login_via_browser(self, timeout=180, poll_interval=1):
+    def login_via_browser(self, timeout=600, poll_interval=1, on_status=None):
         """Opens a Selenium-driven browser, auto-fills the client ID/password if
         available, and waits for you to complete the OTP step. Once MasterTrust
         redirects back with an authorization code in the URL, it's captured
@@ -81,8 +82,11 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
 
+        on_status = on_status or (lambda status: None)
+
         driver = webdriver.Chrome()
         try:
+            on_status("starting_browser")
             driver.get(self.get_login_url())
 
             if self.user_id and self.password:
@@ -93,9 +97,11 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
                 driver.find_element(By.ID, "lgnpwd").send_keys(self.password)
                 driver.find_element(By.CLASS_NAME, "lgnBtnClss").click()
 
+            on_status("waiting_for_otp")
             auth_code = None
             elapsed = 0
             while elapsed < timeout:
+                self._raise_if_cancelled()
                 query = parse_qs(urlparse(driver.current_url).query)
                 if "code" in query:
                     auth_code = query["code"][0]
@@ -105,6 +111,8 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
 
             if not auth_code:
                 raise TimeoutError("Timed out waiting for the login redirect containing the authorization code.")
+
+            on_status("authenticating")
         finally:
             driver.quit()
 
@@ -115,9 +123,9 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
             raise RuntimeError("No access token available. Call authenticate() first.")
         return {"Authorization": f"Bearer {self.access_token}"}
 
-    def authenticate(self):
+    def authenticate(self, on_status=None):
         """Always runs the full browser login flow."""
-        return self.login_via_browser()
+        return self.login_via_browser(on_status=on_status)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@
   <main class="page">
     <header class="page-header">
       <h1>Broker Auth Console</h1>
-      <p class="subtitle">Trigger a broker login flow and capture the access token.</p>
+      <p class="subtitle">Trigger a broker login flow and complete it right here.</p>
     </header>
 
     <section id="broker-list" class="broker-list" aria-live="polite">
@@ -22,6 +22,18 @@
       <ul id="log-list" class="log-list"></ul>
     </section>
   </main>
+
+  <div id="auth-overlay" class="auth-overlay" hidden>
+    <div class="auth-modal">
+      <div class="auth-modal-header">
+        <h2 id="auth-modal-title">Authenticating…</h2>
+        <button id="auth-cancel-btn" class="cancel-btn" type="button">Cancel</button>
+      </div>
+      <p id="auth-modal-status" class="auth-modal-status">Starting secure browser…</p>
+      <div id="vnc-container" class="vnc-container"></div>
+      <p class="vnc-hint">Complete the broker login (and OTP, if asked) in the browser above. Nothing here ever shows your access token.</p>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

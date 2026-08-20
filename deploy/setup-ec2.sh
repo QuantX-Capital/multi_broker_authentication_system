@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One-time EC2 setup: Ubuntu 22.04/24.04. Installs Chrome, a virtual display,
-# and a noVNC viewer so the OTP step can be completed remotely through a browser tab.
+# and a noVNC viewer so the OTP step can be completed remotely, embedded in the
+# web app - not through a separate :6080 tab.
 set -euo pipefail
 
 sudo apt-get update
@@ -13,8 +14,11 @@ sudo apt-get install -y /tmp/chrome.deb
 echo "Done. Chrome, Xvfb, x11vnc, and noVNC are installed."
 echo
 echo "Next steps:"
-echo "  1. Set a VNC password (interactive, run once):"
-echo "       sudo x11vnc -storepasswd /etc/x11vnc.pass"
-echo "  2. Copy the systemd unit files from deploy/ into /etc/systemd/system/"
-echo "  3. sudo systemctl enable --now xvfb x11vnc novnc broker-auth"
-echo "  4. Open http://<ec2-ip>:6080/vnc.html to watch/interact with the browser during login"
+echo "  1. Copy the systemd unit files from deploy/ into /etc/systemd/system/"
+echo "  2. sudo systemctl daemon-reload && sudo systemctl enable --now xvfb x11vnc novnc broker-auth"
+echo "  3. Merge deploy/nginx-broker-auth.conf's location blocks into your existing"
+echo "     Nginx site config, then: sudo nginx -t && sudo systemctl reload nginx"
+echo "  4. Confirm ports 6080/5900/8000 are NOT open in the EC2 security group -"
+echo "     only 22 (your IP), 80, and 443 should be public"
+echo "  5. Open https://<your-domain> and use Authenticate as normal - the browser"
+echo "     view now appears embedded in the page, no separate :6080 tab needed"
