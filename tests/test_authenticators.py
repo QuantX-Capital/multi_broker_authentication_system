@@ -6,7 +6,9 @@ import boto3
 import pytest
 import requests
 
-from fakes import FakeSecretsClient, ScriptedDriver, SinglePageOtpDriver
+from selenium.webdriver.common.by import By
+
+from fakes import FakeSecretsClient, NoSubmitButtonDriver, ScriptedDriver, SinglePageOtpDriver
 
 from base_authenticator import AuthCancelled
 
@@ -96,6 +98,27 @@ class TestZerodhaAuthenticator:
         with pytest.raises(AuthCancelled):
             auth.start_login("uid", "pwd")
         assert driver.quit_called is True
+
+    def test_submit_otp_never_looks_up_a_submit_button(self, monkeypatch):
+        """Regression test for the production NoSuchElementException on
+        //button[@type="submit"]: Zerodha's OTP page submits itself once the
+        OTP is typed, so submit_otp() must not call find_element() at all."""
+        client = _patch_boto3(monkeypatch, ZERODHA_SECRET)
+        _patch_requests_post(monkeypatch, {"data": {"access_token": "ACCESS5"}})
+
+        from zerodha import ZerodhaAuthenticator
+
+        auth = ZerodhaAuthenticator()
+        driver = NoSubmitButtonDriver("request_token", "RTOK")
+        auth._driver = driver
+        auth._By = By
+
+        token = auth.submit_otp("654321")
+
+        assert token == "ACCESS5"
+        assert auth.access_token == "ACCESS5"
+        assert driver.quit_called is True
+        assert client.put_calls[-1]["access_token"] == "ACCESS5"
 
 
 class TestMasterTrustAuthenticator:

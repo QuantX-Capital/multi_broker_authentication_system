@@ -128,7 +128,8 @@ class ZerodhaAuthenticator(BrokerAuthenticator):
     def submit_otp(self, otp, on_status=None):
         """Enters the OTP/TOTP into the already-open login page and waits for
         the redirect containing request_token, then exchanges it for an
-        access token."""
+        access token. Zerodha's OTP page submits itself automatically once a
+        correct OTP is entered - there is no submit button to click."""
         if self._driver is None:
             raise RuntimeError("start_login() must be called before submit_otp().")
 
@@ -141,7 +142,6 @@ class ZerodhaAuthenticator(BrokerAuthenticator):
             if otp_field is None:
                 raise RuntimeError("OTP input field is no longer present on the page.")
             otp_field.send_keys(otp)
-            driver.find_element(By.XPATH, '//button[@type="submit"]').click()
 
             on_status("authenticating")
             return self._finish_from_redirect(driver)

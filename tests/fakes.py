@@ -20,21 +20,26 @@ class FakeSecretsClient:
 
 
 class _RecordingElement:
-    """Stands in for a Selenium WebElement. send_keys() just records what it
-    was given; click() invokes whatever callback the owning fake driver gave
-    it (defaulting to the driver's own _on_click, for drivers that track
-    clicks by count rather than by which element was clicked)."""
+    """Stands in for a Selenium WebElement. click() and send_keys() invoke
+    whatever callbacks the owning fake driver gave them - each fake driver
+    wires these up to model the specific page-transition behavior it's
+    simulating (a button click, or a broker page that auto-submits once a
+    value is typed)."""
 
-    def __init__(self, driver, on_click=None):
+    def __init__(self, driver, on_click=None, on_send_keys=None):
         self._driver = driver
-        self._on_click_cb = on_click or driver._on_click
+        self._on_click_cb = on_click
+        self._on_send_keys_cb = on_send_keys
         self.sent_keys = []
 
     def send_keys(self, value):
         self.sent_keys.append(value)
+        if self._on_send_keys_cb:
+            self._on_send_keys_cb(value)
 
     def click(self):
-        self._on_click_cb()
+        if self._on_click_cb:
+            self._on_click_cb()
 
     def is_displayed(self):
         return True
@@ -43,12 +48,14 @@ class _RecordingElement:
 class ScriptedDriver:
     """Stands in for a Selenium Chrome driver.
 
-    Simulates a broker login page: the first click (submitting the
-    credentials form) either reveals an OTP input or redirects straight to
-    the callback URL; the second click (submitting the OTP) always
-    redirects to the callback URL. No real navigation happens - by/value
-    locators are accepted but ignored, since orchestration logic (not exact
-    CSS/XPath selectors) is what these tests exercise.
+    Simulates a broker login page: clicking the credentials-submit button
+    either reveals an OTP input or redirects straight to the callback URL.
+    Once revealed, entering a value into the OTP input (send_keys) itself
+    triggers the redirect - mirroring Zerodha's page, which submits itself
+    automatically once the OTP is typed and has no button to click. No real
+    navigation happens - by/value locators are accepted but ignored, since
+    orchestration logic (not exact CSS/XPath selectors) is what these tests
+    exercise.
     """
 
     def __init__(self, redirect_query_param, redirect_value, otp_required=True):
@@ -58,23 +65,26 @@ class ScriptedDriver:
         self._redirect_value = redirect_value
         self._otp_required = otp_required
         self._otp_visible = False
-        self._click_count = 0
 
     def get(self, url):
         self.current_url = url
 
     def find_element(self, by, value):
-        return _RecordingElement(self)
+        return _RecordingElement(self, on_click=self._handle_credentials_submit)
 
     def find_elements(self, by, value):
-        return [_RecordingElement(self)] if self._otp_visible else []
+        if self._otp_visible:
+            return [_RecordingElement(self, on_send_keys=self._handle_otp_entered)]
+        return []
 
-    def _on_click(self):
-        self._click_count += 1
-        if self._click_count == 1 and self._otp_required:
+    def _handle_credentials_submit(self):
+        if self._otp_required:
             self._otp_visible = True
         else:
             self._redirect()
+
+    def _handle_otp_entered(self, value):
+        self._redirect()
 
     def _redirect(self):
         self.current_url = (
@@ -82,6 +92,42 @@ class ScriptedDriver:
             f"?{self._redirect_query_param}={self._redirect_value}"
         )
         self._otp_visible = False
+
+    def quit(self):
+        self.quit_called = True
+
+
+class NoSubmitButtonDriver:
+    """Regression guard for Zerodha's OTP auto-submit fix: find_element()
+    must never be called from submit_otp() - production hit
+    NoSuchElementException there because the old code looked up and clicked
+    a submit button that doesn't exist on Zerodha's OTP page. Entering the
+    OTP (send_keys) triggers the redirect on its own, exactly like the real
+    page does."""
+
+    def __init__(self, redirect_query_param, redirect_value):
+        self.current_url = "https://broker.example/login"
+        self.quit_called = False
+        self._redirect_query_param = redirect_query_param
+        self._redirect_value = redirect_value
+
+    def get(self, url):
+        self.current_url = url
+
+    def find_element(self, by, value):
+        raise AssertionError(
+            f"find_element({value!r}) must not be called here - "
+            "Zerodha's OTP page has no submit button to locate/click."
+        )
+
+    def find_elements(self, by, value):
+        return [_RecordingElement(self, on_send_keys=self._handle_otp_entered)]
+
+    def _handle_otp_entered(self, value):
+        self.current_url = (
+            f"https://broker.example/callback"
+            f"?{self._redirect_query_param}={self._redirect_value}"
+        )
 
     def quit(self):
         self.quit_called = True
@@ -118,12 +164,6 @@ class SinglePageOtpDriver:
             return [_RecordingElement(self, on_click=self._handle_get_otp_click)]
         # find_otp_input's lookup - the OTP field is present from page load.
         return [_RecordingElement(self)]
-
-    def _on_click(self):
-        # Only reached if something clicks an element that wasn't given an
-        # explicit on_click handler (e.g. the OTP input) - that would be a
-        # bug in the code under test, not expected fake-driver behavior.
-        raise AssertionError("unexpected click on an element with no handler")
 
     def _handle_get_otp_click(self):
         self.get_otp_clicked = True
