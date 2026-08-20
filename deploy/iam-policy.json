@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BrokerAuthSecretsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:PutSecretValue"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:ap-south-1:377193654537:secret:/trading/brokers/zerodha/luv-*",
+        "arn:aws:secretsmanager:ap-south-1:377193654537:secret:/trading/brokers/mastertrust/vaibhav-*"
+      ]
+    }
+  ]
+}

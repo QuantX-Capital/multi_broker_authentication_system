@@ -1,0 +1,13 @@
+[Unit]
+Description=VNC server exposing the virtual display
+After=xvfb.service
+Requires=xvfb.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/x11vnc -display :99 -forever -shared -rfbport 5900 -rfbauth /etc/x11vnc.pass
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
