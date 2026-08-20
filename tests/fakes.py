@@ -26,11 +26,12 @@ class _RecordingElement:
     simulating (a button click, or a broker page that auto-submits once a
     value is typed)."""
 
-    def __init__(self, driver, on_click=None, on_send_keys=None):
+    def __init__(self, driver, on_click=None, on_send_keys=None, text=""):
         self._driver = driver
         self._on_click_cb = on_click
         self._on_send_keys_cb = on_send_keys
         self.sent_keys = []
+        self.text = text
 
     def send_keys(self, value):
         self.sent_keys.append(value)
@@ -136,19 +137,28 @@ class NoSubmitButtonDriver:
 class SinglePageOtpDriver:
     """Stands in for a Selenium Chrome driver modeling MasterTrust-style
     login pages: user ID, password, and OTP inputs all live on one page from
-    the start. A distinct "Get OTP" click (looked up by visible text, via
-    find_clickable_by_text) requests the OTP; a separate final "LOGIN" click
-    (looked up by id/class, via find_element) submits everything and
-    redirects. No real navigation happens - by/value locators are otherwise
-    ignored, since orchestration logic is what these tests exercise.
+    the start. A distinct "Get OTP" click (class "getotp") requests the OTP;
+    a separate final "LOGIN" click (class "lgnBtnClss", via find_element)
+    submits everything and redirects. No real navigation happens - by/value
+    locators are otherwise ignored, since orchestration logic is what these
+    tests exercise.
+
+    If `credentials_error_text` is set, a fake error-toast element (matching
+    MasterTrustAuthenticator.GET_OTP_ERROR_TOAST_CSS) becomes findable right
+    after the "Get OTP" click - simulating MasterTrust's Vue-mounted
+    "Invalid User" toast for wrong credentials.
     """
 
-    def __init__(self, redirect_query_param, redirect_value):
+    ERROR_TOAST_CSS = ".toastContent.error-toast .toast-text"
+
+    def __init__(self, redirect_query_param, redirect_value, credentials_error_text=None):
         self.current_url = "https://broker.example/login"
         self.quit_called = False
         self.get_otp_clicked = False
         self._redirect_query_param = redirect_query_param
         self._redirect_value = redirect_value
+        self._credentials_error_text = credentials_error_text
+        self._show_credentials_error = False
 
     def get(self, url):
         self.current_url = url
@@ -159,14 +169,22 @@ class SinglePageOtpDriver:
         return _RecordingElement(self, on_click=self._handle_login_click)
 
     def find_elements(self, by, value):
-        if "normalize-space(.)" in value:
-            # find_clickable_by_text's "Get OTP" lookup.
+        if value == self.ERROR_TOAST_CSS:
+            # MasterTrustAuthenticator._wait_for_get_otp_error's lookup.
+            if self._show_credentials_error:
+                return [_RecordingElement(self, text=self._credentials_error_text)]
+            return []
+        if value == "getotp":
             return [_RecordingElement(self, on_click=self._handle_get_otp_click)]
-        # find_otp_input's lookup - the OTP field is present from page load.
-        return [_RecordingElement(self)]
+        if value == "lgnotp":
+            # The OTP field is present in the DOM from page load.
+            return [_RecordingElement(self)]
+        return []
 
     def _handle_get_otp_click(self):
         self.get_otp_clicked = True
+        if self._credentials_error_text:
+            self._show_credentials_error = True
 
     def _handle_login_click(self):
         self.current_url = (
@@ -178,10 +196,14 @@ class SinglePageOtpDriver:
         self.quit_called = True
 
 
-def make_fake_authenticator_cls(otp_required=True, start_raises=False, otp_raises=False):
+def make_fake_authenticator_cls(
+    otp_required=True, start_raises=False, start_raises_invalid_credentials=False, otp_raises=False
+):
     """Builds a fake BrokerAuthenticator-shaped class for testing main.py's
     orchestration in isolation from any real broker/Selenium logic. Created
     instances are collected on the class's `instances` list."""
+
+    from base_authenticator import InvalidCredentials
 
     instances = []
 
@@ -195,6 +217,8 @@ def make_fake_authenticator_cls(otp_required=True, start_raises=False, otp_raise
 
         def start_login(self, user_id, password, on_status=None):
             self.seen_password = password
+            if start_raises_invalid_credentials:
+                raise InvalidCredentials("simulated invalid credentials")
             if start_raises:
                 raise RuntimeError("simulated start_login failure")
             return otp_required

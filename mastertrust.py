@@ -1,12 +1,12 @@
-import json
 import hashlib
+import json
 import time
 from urllib.parse import urlparse, parse_qs
 
 import boto3
 import requests
 
-from base_authenticator import BrokerAuthenticator, find_clickable_by_text, find_otp_input
+from base_authenticator import BrokerAuthenticator, InvalidCredentials
 
 
 class MasterTrustAuthenticator(BrokerAuthenticator):
@@ -17,6 +17,14 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
 
     CREDENTIALS_TIMEOUT = 20
     REDIRECT_TIMEOUT = 600
+    GET_OTP_ERROR_CHECK_TIMEOUT = 10
+
+    # MasterTrust's error toast (e.g. "Invalid User" for a wrong ID/password)
+    # is a Vue-mounted element that exists in the DOM only while it's
+    # showing - it can appear and vanish within a second or two. The
+    # `data-v-*` attribute is Vue's per-build scoped-CSS hash and changes
+    # across deployments; these plain class names are the stable part.
+    GET_OTP_ERROR_TOAST_CSS = ".toastContent.error-toast .toast-text"
 
     def __init__(self, secret_id="/trading/brokers/mastertrust/vaibhav", region_name="ap-south-1"):
         super().__init__()
@@ -112,12 +120,18 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
             driver.find_element(By.ID, "lgnusrid").send_keys(user_id)
             driver.find_element(By.ID, "lgnpwd").send_keys(password)
 
-            get_otp_button = find_clickable_by_text(driver, By, "Get OTP")
-            if get_otp_button is None:
+            get_otp_buttons = driver.find_elements(By.CLASS_NAME, "getotp")
+            if not get_otp_buttons:
                 raise RuntimeError(
-                    "Could not find the 'Get OTP' button on the MasterTrust login page."
+                    "Could not find the 'Get OTP' element (class 'getotp') on the MasterTrust login page."
                 )
-            get_otp_button.click()
+            get_otp_buttons[0].click()
+
+            error_message = self._wait_for_get_otp_error(driver, By)
+            if error_message:
+                raise InvalidCredentials(
+                    f"MasterTrust rejected the login credentials: {error_message!r}."
+                )
 
             self._raise_if_cancelled()
             on_status("waiting_for_otp")
@@ -125,6 +139,26 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
         except Exception:
             self.abort()
             raise
+
+    def _wait_for_get_otp_error(self, driver, By):
+        """After clicking "Get OTP", a wrong user ID/password surfaces as a
+        brief error toast (e.g. "Invalid User") instead of an OTP being
+        sent. The toast is Vue-mounted only while visible, so this polls
+        tightly for it. There's no positive "OTP sent" signal to wait for
+        instead, so returns the toast's text if one appeared, or None if
+        nothing showed up within the window (OTP request assumed to have
+        succeeded)."""
+        elapsed = 0.0
+        poll_interval = 0.15
+        while elapsed < self.GET_OTP_ERROR_CHECK_TIMEOUT:
+            self._raise_if_cancelled()
+            for element in driver.find_elements(By.CSS_SELECTOR, self.GET_OTP_ERROR_TOAST_CSS):
+                text = (element.text or "").strip()
+                if text:
+                    return text
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+        return None
 
     def submit_otp(self, otp, on_status=None):
         """Enters the OTP into the already-open login page and waits for the
@@ -138,10 +172,10 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
         By = self._By
 
         try:
-            otp_field = find_otp_input(driver, By)
-            if otp_field is None:
-                raise RuntimeError("OTP input field is no longer present on the page.")
-            otp_field.send_keys(otp)
+            otp_fields = driver.find_elements(By.ID, "lgnotp")
+            if not otp_fields:
+                raise RuntimeError("OTP input field (id 'lgnotp') is no longer present on the page.")
+            otp_fields[0].send_keys(otp)
             driver.find_element(By.CLASS_NAME, "lgnBtnClss").click()
 
             on_status("authenticating")

@@ -87,6 +87,18 @@ def test_start_login_failure_returns_502_and_tears_down(client, monkeypatch):
     assert session_manager.pop_session("zerodha") is None
 
 
+def test_start_login_invalid_credentials_returns_401_with_clear_detail(client, monkeypatch):
+    cls = make_fake_authenticator_cls(start_raises_invalid_credentials=True)
+    _register(monkeypatch, "mastertrust", cls)
+
+    res = client.post("/auth/mastertrust/start", json={"user_id": "u1", "password": "wrong"})
+
+    assert res.status_code == 401
+    assert res.json() == {"detail": "Invalid broker login credentials."}
+    assert cls.instances[0].aborted is True
+    assert session_manager.pop_session("mastertrust") is None
+
+
 def test_submit_otp_failure_returns_502(client, monkeypatch):
     cls = make_fake_authenticator_cls(otp_required=True, otp_raises=True)
     _register(monkeypatch, "zerodha", cls)

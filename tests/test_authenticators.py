@@ -10,7 +10,7 @@ from selenium.webdriver.common.by import By
 
 from fakes import FakeSecretsClient, NoSubmitButtonDriver, ScriptedDriver, SinglePageOtpDriver
 
-from base_authenticator import AuthCancelled
+from base_authenticator import AuthCancelled, InvalidCredentials
 
 ZERODHA_SECRET = {"api_key": "K1", "secret_key": "S1", "user_id": "ZUSER"}
 MASTERTRUST_SECRET = {"client_id": "C1", "secret_key": "S2", "user_id": "MUSER"}
@@ -37,6 +37,17 @@ def _patch_requests_post(monkeypatch, json_data, status_code=200):
             return json_data
 
     monkeypatch.setattr(requests, "post", lambda *a, **k: FakeResponse())
+
+
+@pytest.fixture(autouse=True)
+def _fast_get_otp_error_check(monkeypatch):
+    """start_login() polls for MasterTrust's 'Get OTP' error toast for up to
+    GET_OTP_ERROR_CHECK_TIMEOUT seconds on every call, including the happy
+    path. Shrink that window so the test suite doesn't pay real wall-clock
+    time for it."""
+    from mastertrust import MasterTrustAuthenticator
+
+    monkeypatch.setattr(MasterTrustAuthenticator, "GET_OTP_ERROR_CHECK_TIMEOUT", 0.05)
 
 
 class TestZerodhaAuthenticator:
@@ -181,3 +192,21 @@ class TestMasterTrustAuthenticator:
 
         with pytest.raises(ValueError):
             MasterTrustAuthenticator()
+
+    def test_start_login_raises_on_invalid_credentials_toast(self, monkeypatch):
+        """Regression test: clicking 'Get OTP' with a wrong user ID/password
+        surfaces an 'Invalid User' toast instead of sending an OTP.
+        start_login() must not report otp_required in that case."""
+        _patch_boto3(monkeypatch, MASTERTRUST_SECRET)
+        driver = SinglePageOtpDriver("code", "AUTHCODE", credentials_error_text="Invalid User")
+        _patch_chrome(monkeypatch, driver)
+
+        from mastertrust import MasterTrustAuthenticator
+
+        auth = MasterTrustAuthenticator()
+
+        with pytest.raises(InvalidCredentials, match="Invalid User"):
+            auth.start_login("uid", "wrong-password")
+
+        assert driver.get_otp_clicked is True
+        assert driver.quit_called is True  # torn down, not left dangling

@@ -5,6 +5,14 @@ class AuthCancelled(Exception):
     """Raised inside a login flow when a session is cancelled from outside."""
 
 
+class InvalidCredentials(Exception):
+    """Raised when the broker itself rejects the user ID/password outright
+    (e.g. an "Invalid User" toast), as opposed to any other login failure
+    (selector not found, timeout, network error, etc). Callers can catch
+    this specifically to show a clear "wrong credentials" message instead of
+    a generic failure."""
+
+
 # Best-effort OTP input locator shared by broker authenticators. The original
 # code never automated OTP entry (a human typed it into the VNC-embedded
 # browser), so there is no pre-existing selector to preserve here - this
@@ -21,25 +29,6 @@ def find_otp_input(driver, by):
     """Returns the first visible element on the page that looks like an OTP
     input, or None if none is present yet."""
     for element in driver.find_elements(by.XPATH, OTP_INPUT_XPATH):
-        if element.is_displayed():
-            return element
-    return None
-
-
-def find_clickable_by_text(driver, by, text):
-    """Returns the first visible link/button whose visible text matches
-    `text` (case-insensitive, whitespace-normalized), or None if not found.
-
-    Used where a broker's UI exposes an action (e.g. a "Get OTP" link) only
-    as text rather than a stable id/class.
-    """
-    upper = text.upper()
-    lower = text.lower()
-    xpath = (
-        "//*[self::a or self::button or self::span or self::div]"
-        f'[contains(translate(normalize-space(.), "{upper}", "{lower}"), "{lower}")]'
-    )
-    for element in driver.find_elements(by.XPATH, xpath):
         if element.is_displayed():
             return element
     return None

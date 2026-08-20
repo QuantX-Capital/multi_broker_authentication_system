@@ -6,6 +6,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from base_authenticator import InvalidCredentials
 from zerodha import ZerodhaAuthenticator
 from mastertrust import MasterTrustAuthenticator
 import session_manager
@@ -61,6 +62,10 @@ async def start_auth(broker: str, body: StartAuthRequest):
     try:
         try:
             otp_required = await run_in_threadpool(authenticator.start_login, user_id, password)
+        except InvalidCredentials:
+            logger.info("start_login rejected invalid credentials for broker '%s'", broker_key)
+            authenticator.abort()
+            raise HTTPException(status_code=401, detail="Invalid broker login credentials.")
         except Exception:
             logger.exception("start_login failed for broker '%s'", broker_key)
             authenticator.abort()
