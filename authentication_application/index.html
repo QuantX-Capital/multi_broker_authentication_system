@@ -29,9 +29,25 @@
         <h2 id="auth-modal-title">Authenticating…</h2>
         <button id="auth-cancel-btn" class="cancel-btn" type="button">Cancel</button>
       </div>
-      <p id="auth-modal-status" class="auth-modal-status">Starting secure browser…</p>
-      <div id="vnc-container" class="vnc-container"></div>
-      <p class="vnc-hint">Complete the broker login (and OTP, if asked) in the browser above. Nothing here ever shows your access token.</p>
+
+      <form id="credentials-form" class="auth-form">
+        <label for="input-user-id">User ID</label>
+        <input id="input-user-id" name="user_id" type="text" autocomplete="off" required />
+
+        <label for="input-password">Password</label>
+        <input id="input-password" name="password" type="password" autocomplete="off" required />
+
+        <button type="submit" class="submit-btn">Authenticate</button>
+      </form>
+
+      <form id="otp-form" class="auth-form" hidden>
+        <label for="input-otp">OTP</label>
+        <input id="input-otp" name="otp" type="text" inputmode="numeric" autocomplete="off" required />
+
+        <button type="submit" class="submit-btn">Submit OTP</button>
+      </form>
+
+      <p id="auth-modal-status" class="auth-modal-status" hidden></p>
     </div>
   </div>
 

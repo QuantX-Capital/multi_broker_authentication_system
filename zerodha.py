@@ -5,7 +5,7 @@ from urllib.parse import urlparse, parse_qs
 
 import boto3
 import requests
-from base_authenticator import BrokerAuthenticator
+from base_authenticator import BrokerAuthenticator, find_otp_input
 
 
 class ZerodhaAuthenticator(BrokerAuthenticator):
@@ -14,6 +14,10 @@ class ZerodhaAuthenticator(BrokerAuthenticator):
     LOGIN_URL = "https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
     TOKEN_URL = "https://api.kite.trade/session/token"
     PROFILE_URL = "https://api.kite.trade/user/profile"
+
+    CREDENTIALS_TIMEOUT = 20
+    OTP_PROMPT_TIMEOUT = 20
+    REDIRECT_TIMEOUT = 600
 
     def __init__(self, secret_id="/trading/brokers/zerodha/luv", region_name="ap-south-1"):
         super().__init__()
@@ -26,7 +30,8 @@ class ZerodhaAuthenticator(BrokerAuthenticator):
         self.redirect_url = secret.get("redirect_url")
         self.access_token = secret.get("access_token") or None
         self.user_id = secret.get("user_id")
-        self.password = secret.get("password")
+
+        self._driver = None
 
     def _get_secret(self):
         response = self.client.get_secret_value(SecretId=self.secret_id)
@@ -67,11 +72,11 @@ class ZerodhaAuthenticator(BrokerAuthenticator):
         self._update_secret(access_token)
         return access_token
 
-    def login_via_browser(self, timeout=600, poll_interval=1, on_status=None):
-        """Opens a Selenium-driven browser, auto-fills the user ID/password if
-        available, and waits for you to complete the OTP step. Once Zerodha
-        redirects back with request_token in the URL, it's captured automatically
-        and exchanged for an access token."""
+    def start_login(self, user_id, password, on_status=None):
+        """Opens a headless Selenium-driven Chrome, fills in the user ID and
+        password, and submits the login form. Returns True if Zerodha is now
+        showing an OTP/TOTP prompt (submit_otp() must be called next), or
+        False if the redirect with request_token already arrived without one."""
         from selenium import webdriver
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import WebDriverWait
@@ -79,39 +84,94 @@ class ZerodhaAuthenticator(BrokerAuthenticator):
 
         on_status = on_status or (lambda status: None)
 
-        driver = webdriver.Chrome()
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080")
+
+        driver = webdriver.Chrome(options=options)
+        self._driver = driver
+        self._By = By
+
         try:
             on_status("starting_browser")
             driver.get(self.get_login_url())
 
-            if self.user_id and self.password:
-                WebDriverWait(driver, 20).until(
-                    EC.presence_of_element_located((By.ID, "userid"))
-                )
-                driver.find_element(By.ID, "userid").send_keys(self.user_id)
-                driver.find_element(By.ID, "password").send_keys(self.password)
-                driver.find_element(By.XPATH, '//button[@type="submit"]').click()
+            WebDriverWait(driver, self.CREDENTIALS_TIMEOUT).until(
+                EC.presence_of_element_located((By.ID, "userid"))
+            )
+            driver.find_element(By.ID, "userid").send_keys(user_id)
+            driver.find_element(By.ID, "password").send_keys(password)
+            driver.find_element(By.XPATH, '//button[@type="submit"]').click()
 
             on_status("waiting_for_otp")
-            request_token = None
-            elapsed = 0
-            while elapsed < timeout:
+            elapsed = 0.0
+            poll_interval = 0.5
+            while elapsed < self.OTP_PROMPT_TIMEOUT:
                 self._raise_if_cancelled()
-                query = parse_qs(urlparse(driver.current_url).query)
-                if "request_token" in query:
-                    request_token = query["request_token"][0]
-                    break
+                if "request_token" in parse_qs(urlparse(driver.current_url).query):
+                    on_status("authenticating")
+                    self._finish_from_redirect(driver)
+                    self.abort()
+                    return False
+                if find_otp_input(driver, By) is not None:
+                    return True
                 time.sleep(poll_interval)
                 elapsed += poll_interval
 
-            if not request_token:
-                raise TimeoutError("Timed out waiting for the login redirect containing request_token.")
+            raise TimeoutError("Timed out waiting for the OTP prompt or login redirect.")
+        except Exception:
+            self.abort()
+            raise
+
+    def submit_otp(self, otp, on_status=None):
+        """Enters the OTP/TOTP into the already-open login page and waits for
+        the redirect containing request_token, then exchanges it for an
+        access token."""
+        if self._driver is None:
+            raise RuntimeError("start_login() must be called before submit_otp().")
+
+        on_status = on_status or (lambda status: None)
+        driver = self._driver
+        By = self._By
+
+        try:
+            otp_field = find_otp_input(driver, By)
+            if otp_field is None:
+                raise RuntimeError("OTP input field is no longer present on the page.")
+            otp_field.send_keys(otp)
+            driver.find_element(By.XPATH, '//button[@type="submit"]').click()
 
             on_status("authenticating")
+            return self._finish_from_redirect(driver)
         finally:
-            driver.quit()
+            self.abort()
+
+    def _finish_from_redirect(self, driver):
+        request_token = None
+        elapsed = 0
+        poll_interval = 1
+        while elapsed < self.REDIRECT_TIMEOUT:
+            self._raise_if_cancelled()
+            query = parse_qs(urlparse(driver.current_url).query)
+            if "request_token" in query:
+                request_token = query["request_token"][0]
+                break
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        if not request_token:
+            raise TimeoutError("Timed out waiting for the login redirect containing request_token.")
 
         return self.exchange_request_token(request_token)
+
+    def abort(self):
+        if self._driver is not None:
+            try:
+                self._driver.quit()
+            finally:
+                self._driver = None
 
     def get_headers(self):
         if not self.access_token:
@@ -122,8 +182,25 @@ class ZerodhaAuthenticator(BrokerAuthenticator):
         }
 
     def authenticate(self, on_status=None):
-        """Always runs the full browser login flow."""
-        return self.login_via_browser(on_status=on_status)
+        """Convenience wrapper for local/console use (see __main__ below):
+        runs the full login flow using the secret's stored user_id, prompting
+        for the password and OTP on the console instead of over the API."""
+        import getpass
+
+        password = getpass.getpass(f"Zerodha password for {self.user_id}: ")
+        try:
+            otp_required = self.start_login(self.user_id, password, on_status=on_status)
+        finally:
+            password = None
+
+        if not otp_required:
+            return self.access_token
+
+        otp = input("Zerodha OTP/TOTP: ")
+        try:
+            return self.submit_otp(otp, on_status=on_status)
+        finally:
+            otp = None
 
     def get_profile(self):
         response = requests.get(self.PROFILE_URL, headers=self.get_headers())
@@ -133,5 +210,4 @@ class ZerodhaAuthenticator(BrokerAuthenticator):
 if __name__ == "__main__":
     auth = ZerodhaAuthenticator()
     auth.authenticate()
-    print("Access token:", auth.access_token)
-    print(auth.get_profile())
+    print("Authenticated. Access token stored in Secrets Manager.")

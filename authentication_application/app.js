@@ -5,22 +5,16 @@ const logListEl = document.getElementById("log-list");
 const authOverlay = document.getElementById("auth-overlay");
 const authModalTitle = document.getElementById("auth-modal-title");
 const authModalStatus = document.getElementById("auth-modal-status");
-const vncContainer = document.getElementById("vnc-container");
 const cancelBtn = document.getElementById("auth-cancel-btn");
 
-const STATUS_TEXT = {
-  starting_browser: "Starting secure browser…",
-  waiting_for_otp: "Complete the broker login (and OTP, if asked) in the browser below.",
-  authenticating: "Login detected — exchanging tokens…",
-  success: "Authenticated successfully.",
-  failed: "Authentication failed.",
-  cancelled: "Cancelled.",
-};
+const credentialsForm = document.getElementById("credentials-form");
+const userIdInput = document.getElementById("input-user-id");
+const passwordInput = document.getElementById("input-password");
 
-const TERMINAL_STATUSES = new Set(["success", "failed", "cancelled"]);
-const POLL_INTERVAL_MS = 1500;
+const otpForm = document.getElementById("otp-form");
+const otpInput = document.getElementById("input-otp");
 
-let active = null; // { sessionId, broker, pollTimer, rfb }
+let active = null; // { broker, awaitingOtp }
 
 function logEvent(message, kind) {
   logPanelEl.hidden = false;
@@ -65,7 +59,7 @@ function renderBrokers(brokers) {
   });
 
   brokerListEl.querySelectorAll(".auth-btn").forEach((btn) => {
-    btn.addEventListener("click", () => startAuth(btn.dataset.broker));
+    btn.addEventListener("click", () => openModal(btn.dataset.broker));
   });
 }
 
@@ -80,132 +74,166 @@ async function loadBrokers() {
   }
 }
 
-function vncWebSocketUrl(vncToken) {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${location.host}/vnc/websockify?token=${encodeURIComponent(vncToken)}`;
-}
-
-async function connectVnc(vncToken) {
-  vncContainer.innerHTML = "";
-  try {
-    const { default: RFB } = await import("/novnc/core/rfb.js");
-    const rfb = new RFB(vncContainer, vncWebSocketUrl(vncToken));
-    rfb.scaleViewport = true;
-    rfb.addEventListener("disconnect", () => {
-      // Expected once the session ends and we tear it down ourselves; a
-      // disconnect while still "active" means the viewer dropped unexpectedly.
-      if (active) vncContainer.innerHTML = '<p class="vnc-error">Viewer disconnected.</p>';
-    });
-    return rfb;
-  } catch (err) {
-    vncContainer.innerHTML = '<p class="vnc-error">Could not load the embedded browser viewer.</p>';
-    return null;
-  }
-}
-
-function disconnectVnc() {
-  if (active && active.rfb) {
-    try {
-      active.rfb.disconnect();
-    } catch (err) {
-      // already gone
-    }
-  }
-  vncContainer.innerHTML = "";
-}
-
-function openModal(broker) {
-  authModalTitle.textContent = `${broker} authentication`;
-  authModalStatus.textContent = STATUS_TEXT.starting_browser;
-  authOverlay.hidden = false;
-}
-
-function closeModal() {
-  authOverlay.hidden = true;
-}
-
 function updateBrokerCard(broker, text) {
   const card = document.getElementById(`card-${broker}`);
   if (card) card.querySelector(".broker-status").textContent = text;
 }
 
-async function startAuth(broker) {
-  if (active) return; // one session at a time, matches backend
+function showStatus(text, kind) {
+  authModalStatus.hidden = !text;
+  authModalStatus.textContent = text || "";
+  authModalStatus.className = "auth-modal-status" + (kind ? ` ${kind}` : "");
+}
 
+function clearCredentialInputs() {
+  passwordInput.value = "";
+}
+
+function clearOtpInput() {
+  otpInput.value = "";
+}
+
+function openModal(broker) {
+  active = { broker, awaitingOtp: false };
   setBrokerButtonsDisabled(true);
+  authModalTitle.textContent = `${broker} authentication`;
+  showStatus("");
+  userIdInput.value = "";
+  passwordInput.value = "";
+  otpInput.value = "";
+  credentialsForm.hidden = false;
+  credentialsForm.querySelectorAll("input, button").forEach((el) => (el.disabled = false));
+  otpForm.hidden = true;
+  authOverlay.hidden = false;
+  userIdInput.focus();
+}
+
+function closeModal() {
+  authOverlay.hidden = true;
+  clearCredentialInputs();
+  clearOtpInput();
+  active = null;
+}
+
+function setFormBusy(form, busy) {
+  form.querySelectorAll("input, button").forEach((el) => (el.disabled = busy));
+}
+
+credentialsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!active) return;
+
+  const broker = active.broker;
+  const userId = userIdInput.value;
+  const password = passwordInput.value;
+
+  setFormBusy(credentialsForm, true);
+  showStatus("Starting secure browser…");
   updateBrokerCard(broker, "Starting…");
   logEvent(`Starting authentication for "${broker}"…`);
-  openModal(broker);
 
   let res, data;
   try {
-    res = await fetch(`/auth/${encodeURIComponent(broker)}/start`, { method: "POST" });
+    res = await fetch(`/auth/${encodeURIComponent(broker)}/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId, password }),
+    });
     data = await res.json();
   } catch (err) {
-    finishAuth(broker, "failed", err.message);
+    fail(broker, "Network error while starting authentication.");
     return;
+  } finally {
+    clearCredentialInputs();
   }
 
   if (!res.ok) {
-    finishAuth(broker, "failed", data.detail || `Request failed (${res.status})`);
+    fail(broker, data.detail || `Request failed (${res.status})`);
     return;
   }
 
-  active = { sessionId: data.session_id, broker, rfb: null, pollTimer: null };
-  active.rfb = await connectVnc(data.vnc_token);
-  active.pollTimer = setInterval(() => pollSession(broker), POLL_INTERVAL_MS);
-}
-
-async function pollSession(broker) {
-  if (!active) return;
-  let res, data;
-  try {
-    res = await fetch(`/auth/session/${active.sessionId}`);
-    data = await res.json();
-  } catch (err) {
-    return; // transient network hiccup - try again next tick
-  }
-
-  if (!res.ok) {
-    finishAuth(broker, "failed", data.detail || "Session lookup failed.");
-    return;
-  }
-
-  authModalStatus.textContent = STATUS_TEXT[data.status] || data.status;
-
-  if (TERMINAL_STATUSES.has(data.status)) {
-    finishAuth(broker, data.status, data.error);
-  }
-}
-
-function finishAuth(broker, status, error) {
-  if (active && active.pollTimer) clearInterval(active.pollTimer);
-  disconnectVnc();
-  active = null;
-  setBrokerButtonsDisabled(false);
-  closeModal();
-
-  if (status === "success") {
-    updateBrokerCard(broker, "Authenticated");
-    logEvent(`"${broker}" authenticated successfully.`, "success");
-  } else if (status === "cancelled") {
-    updateBrokerCard(broker, "Cancelled");
-    logEvent(`"${broker}" authentication cancelled.`);
+  if (data.status === "otp_required") {
+    active.awaitingOtp = true;
+    credentialsForm.hidden = true;
+    otpForm.hidden = false;
+    setFormBusy(otpForm, false);
+    showStatus("OTP required — check your device and enter it below.");
+    updateBrokerCard(broker, "Waiting for OTP…");
+    otpInput.focus();
+  } else if (data.status === "authenticated") {
+    succeed(broker);
   } else {
-    updateBrokerCard(broker, "Authentication failed");
-    logEvent(`"${broker}" failed: ${error || "unknown error"}`, "error");
+    fail(broker, `Unexpected status: ${data.status}`);
   }
-}
+});
+
+otpForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!active) return;
+
+  const broker = active.broker;
+  const otp = otpInput.value;
+
+  setFormBusy(otpForm, true);
+  showStatus("Submitting OTP…");
+
+  let res, data;
+  try {
+    res = await fetch(`/auth/${encodeURIComponent(broker)}/otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ otp }),
+    });
+    data = await res.json();
+  } catch (err) {
+    fail(broker, "Network error while submitting OTP.");
+    return;
+  } finally {
+    clearOtpInput();
+  }
+
+  if (!res.ok) {
+    fail(broker, data.detail || `Request failed (${res.status})`);
+    return;
+  }
+
+  if (data.status === "authenticated") {
+    succeed(broker);
+  } else {
+    fail(broker, `Unexpected status: ${data.status}`);
+  }
+});
 
 cancelBtn.addEventListener("click", async () => {
   if (!active) return;
-  const { sessionId, broker } = active;
-  try {
-    await fetch(`/auth/session/${sessionId}/cancel`, { method: "POST" });
-  } catch (err) {
-    // fall through - the poll loop (or user retry) will resolve state either way
+  const { broker, awaitingOtp } = active;
+
+  if (awaitingOtp) {
+    try {
+      await fetch(`/auth/${encodeURIComponent(broker)}/cancel`, { method: "POST" });
+    } catch (err) {
+      // fall through - the session will expire on its own either way
+    }
   }
-  finishAuth(broker, "cancelled");
+
+  updateBrokerCard(broker, "Cancelled");
+  logEvent(`"${broker}" authentication cancelled.`);
+  setBrokerButtonsDisabled(false);
+  closeModal();
 });
+
+function succeed(broker) {
+  updateBrokerCard(broker, "Authenticated");
+  logEvent(`"${broker}" authenticated successfully.`, "success");
+  setBrokerButtonsDisabled(false);
+  closeModal();
+}
+
+function fail(broker, error) {
+  updateBrokerCard(broker, "Authentication failed");
+  logEvent(`"${broker}" failed: ${error || "unknown error"}`, "error");
+  setBrokerButtonsDisabled(false);
+  closeModal();
+}
 
 loadBrokers();

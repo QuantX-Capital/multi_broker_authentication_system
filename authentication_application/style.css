@@ -158,7 +158,7 @@ body {
 
 .auth-modal {
   width: 100%;
-  max-width: 860px;
+  max-width: 420px;
   max-height: 90vh;
   overflow-y: auto;
   background: var(--panel);
@@ -201,23 +201,65 @@ body {
   font-size: 0.9rem;
 }
 
-.vnc-container {
-  width: 100%;
-  min-height: 480px;
-  background: #000;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.vnc-error {
+.auth-modal-status.error {
   color: var(--error);
-  font-size: 0.85rem;
-  padding: 16px;
-  margin: 0;
 }
 
-.vnc-hint {
-  margin: 12px 0 0;
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auth-form[hidden] {
+  display: none;
+}
+
+.auth-form label {
+  font-size: 0.85rem;
   color: var(--text-dim);
-  font-size: 0.8rem;
+  margin-top: 10px;
+}
+
+.auth-form label:first-child {
+  margin-top: 0;
+}
+
+.auth-form input {
+  background: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 0.95rem;
+}
+
+.auth-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.auth-form input:disabled {
+  opacity: 0.6;
+}
+
+.submit-btn {
+  margin-top: 18px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.submit-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.submit-btn:disabled {
+  background: #3a3f4b;
+  cursor: not-allowed;
 }

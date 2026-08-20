@@ -1,11 +1,16 @@
+import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from zerodha import ZerodhaAuthenticator
 from mastertrust import MasterTrustAuthenticator
 import session_manager
+
+logger = logging.getLogger("broker_auth")
 
 app = FastAPI(title="Broker Auth Service")
 
@@ -17,6 +22,25 @@ BROKER_REGISTRY = {
 FRONTEND_DIR = Path(__file__).resolve().parent / "authentication_application"
 
 
+class StartAuthRequest(BaseModel):
+    user_id: str
+    password: str
+
+
+class SubmitOtpRequest(BaseModel):
+    otp: str
+
+
+def _authenticator_for(broker: str):
+    authenticator_cls = BROKER_REGISTRY.get(broker.lower())
+    if authenticator_cls is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown broker '{broker}'. Available: {list(BROKER_REGISTRY)}",
+        )
+    return authenticator_cls
+
+
 @app.get("/brokers")
 def list_brokers():
     """Returns the broker keys the frontend can offer for authentication."""
@@ -24,54 +48,84 @@ def list_brokers():
 
 
 @app.post("/auth/{broker}/start")
-def start_auth(broker: str):
-    """Starts a broker login session: launches Selenium/Chrome in the background
-    (visible through the embedded noVNC viewer) and returns immediately with a
-    session_id plus a one-time VNC access token. The broker access token itself
-    is never returned by this API - it only ever lands in Secrets Manager."""
-    authenticator_cls = BROKER_REGISTRY.get(broker.lower())
-    if authenticator_cls is None:
+async def start_auth(broker: str, body: StartAuthRequest):
+    """Starts a broker login: runs Selenium/Chrome headlessly on the backend
+    and submits the given credentials. The credentials and the broker's
+    access token are never returned to the frontend - only a status."""
+    broker_key = broker.lower()
+    authenticator_cls = _authenticator_for(broker_key)
+    authenticator = authenticator_cls()
+
+    user_id = body.user_id
+    password = body.password
+    try:
+        try:
+            otp_required = await run_in_threadpool(authenticator.start_login, user_id, password)
+        except Exception:
+            logger.exception("start_login failed for broker '%s'", broker_key)
+            authenticator.abort()
+            raise HTTPException(status_code=502, detail="Broker login could not be started.")
+
+        if not otp_required:
+            return {"status": "authenticated"}
+
+        try:
+            session_manager.start_session(broker_key, authenticator)
+        except session_manager.SessionInProgress as exc:
+            authenticator.abort()
+            raise HTTPException(status_code=409, detail=str(exc))
+
+        return {"status": "otp_required"}
+    finally:
+        # Drop references to the plaintext credentials now that they've been
+        # handed to Selenium; nothing here persists them past this point.
+        user_id = None
+        password = None
+        body.password = None
+
+
+@app.post("/auth/{broker}/otp")
+async def submit_auth_otp(broker: str, body: SubmitOtpRequest):
+    """Completes a broker login started by /start, using the OTP the frontend
+    just collected. The access token is never returned to the frontend."""
+    broker_key = broker.lower()
+    _authenticator_for(broker_key)
+
+    session = session_manager.pop_session(broker_key)
+    if session is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Unknown broker '{broker}'. Available: {list(BROKER_REGISTRY)}",
+            detail=f'No authentication in progress for "{broker_key}" (or it expired).',
         )
 
+    otp = body.otp
     try:
-        session = session_manager.start_session(broker.lower(), authenticator_cls)
-    except session_manager.SessionInProgress as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        try:
+            await run_in_threadpool(session.authenticator.submit_otp, otp)
+        except Exception:
+            logger.exception("submit_otp failed for broker '%s'", broker_key)
+            raise HTTPException(status_code=502, detail="OTP submission failed.")
 
-    return {
-        **session.public_dict(),
-        "vnc_token": session.vnc_token,
-    }
+        return {"status": "authenticated"}
+    finally:
+        otp = None
+        body.otp = None
 
 
-@app.get("/auth/session/{session_id}")
-def get_auth_session(session_id: str):
-    """Polled by the frontend to drive the UI's state machine."""
-    session = session_manager.get_session(session_id)
+@app.post("/auth/{broker}/cancel")
+def cancel_auth(broker: str):
+    """Cancels a pending OTP-wait session, if any, and tears down its
+    Selenium session."""
+    broker_key = broker.lower()
+    _authenticator_for(broker_key)
+
+    session = session_manager.cancel_session(broker_key)
     if session is None:
-        raise HTTPException(status_code=404, detail="Unknown session_id.")
-    return session.public_dict()
-
-
-@app.post("/auth/session/{session_id}/cancel")
-def cancel_auth_session(session_id: str):
-    session = session_manager.cancel_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Unknown session_id.")
-    return session.public_dict()
-
-
-@app.get("/auth/vnc/verify")
-def verify_vnc(token: str = Query(default="")):
-    """Called only by Nginx's auth_request directive, never by the frontend
-    directly. Gates the noVNC feed behind the per-session token instead of a
-    reusable global VNC password."""
-    if not session_manager.verify_vnc_token(token):
-        raise HTTPException(status_code=403, detail="Invalid or expired VNC session token.")
-    return {"ok": True}
+        raise HTTPException(
+            status_code=404,
+            detail=f'No authentication in progress for "{broker_key}".',
+        )
+    return {"status": "cancelled"}
 
 
 # Mounted last so it never shadows the API routes above.

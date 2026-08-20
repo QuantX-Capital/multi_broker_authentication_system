@@ -6,7 +6,7 @@ from urllib.parse import urlparse, parse_qs
 import boto3
 import requests
 
-from base_authenticator import BrokerAuthenticator
+from base_authenticator import BrokerAuthenticator, find_clickable_by_text, find_otp_input
 
 
 class MasterTrustAuthenticator(BrokerAuthenticator):
@@ -14,6 +14,9 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
 
     LOGIN_URL = "https://midlive.mastertrust.co.in/NorenWeb2.0/authorize/oauth?client_id={client_id}"
     TOKEN_URL = "https://midlive.mastertrust.co.in/NorenWClientAPI/GenAcsTok"
+
+    CREDENTIALS_TIMEOUT = 20
+    REDIRECT_TIMEOUT = 600
 
     def __init__(self, secret_id="/trading/brokers/mastertrust/vaibhav", region_name="ap-south-1"):
         super().__init__()
@@ -25,12 +28,13 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
         self.secret_key = secret["secret_key"]
         self.access_token = secret.get("access_token") or None
         self.user_id = secret.get("user_id") or self.client_id
-        self.password = secret.get("password")
 
         if not self.client_id:
             raise ValueError(
                 f"'client_id' not found in secret {secret_id!r}. Add it before authenticating."
             )
+
+        self._driver = None
 
     def _get_secret(self):
         response = self.client.get_secret_value(SecretId=self.secret_id)
@@ -72,11 +76,15 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
         self._update_secret(access_token, data.get("refresh_token"))
         return access_token
 
-    def login_via_browser(self, timeout=600, poll_interval=1, on_status=None):
-        """Opens a Selenium-driven browser, auto-fills the client ID/password if
-        available, and waits for you to complete the OTP step. Once MasterTrust
-        redirects back with an authorization code in the URL, it's captured
-        automatically and exchanged for an access token."""
+    def start_login(self, user_id, password, on_status=None):
+        """Opens a headless Selenium-driven Chrome and fills in the client ID
+        and password. MasterTrust's login page keeps the user ID, password,
+        and OTP/TOTP fields on one page throughout - filling in credentials
+        doesn't submit anything by itself. A distinct "Get OTP" click tells
+        the broker to send the OTP; submit_otp() then fills the OTP field
+        and clicks the single "LOGIN" button that submits everything.
+
+        Always returns True: this broker's login always requires an OTP."""
         from selenium import webdriver
         from selenium.webdriver.common.by import By
         from selenium.webdriver.support.ui import WebDriverWait
@@ -84,39 +92,87 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
 
         on_status = on_status or (lambda status: None)
 
-        driver = webdriver.Chrome()
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless=new")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080")
+
+        driver = webdriver.Chrome(options=options)
+        self._driver = driver
+        self._By = By
+
         try:
             on_status("starting_browser")
             driver.get(self.get_login_url())
 
-            if self.user_id and self.password:
-                WebDriverWait(driver, 20).until(
-                    EC.presence_of_element_located((By.ID, "lgnusrid"))
+            WebDriverWait(driver, self.CREDENTIALS_TIMEOUT).until(
+                EC.presence_of_element_located((By.ID, "lgnusrid"))
+            )
+            driver.find_element(By.ID, "lgnusrid").send_keys(user_id)
+            driver.find_element(By.ID, "lgnpwd").send_keys(password)
+
+            get_otp_button = find_clickable_by_text(driver, By, "Get OTP")
+            if get_otp_button is None:
+                raise RuntimeError(
+                    "Could not find the 'Get OTP' button on the MasterTrust login page."
                 )
-                driver.find_element(By.ID, "lgnusrid").send_keys(self.user_id)
-                driver.find_element(By.ID, "lgnpwd").send_keys(self.password)
-                driver.find_element(By.CLASS_NAME, "lgnBtnClss").click()
+            get_otp_button.click()
 
+            self._raise_if_cancelled()
             on_status("waiting_for_otp")
-            auth_code = None
-            elapsed = 0
-            while elapsed < timeout:
-                self._raise_if_cancelled()
-                query = parse_qs(urlparse(driver.current_url).query)
-                if "code" in query:
-                    auth_code = query["code"][0]
-                    break
-                time.sleep(poll_interval)
-                elapsed += poll_interval
+            return True
+        except Exception:
+            self.abort()
+            raise
 
-            if not auth_code:
-                raise TimeoutError("Timed out waiting for the login redirect containing the authorization code.")
+    def submit_otp(self, otp, on_status=None):
+        """Enters the OTP into the already-open login page and waits for the
+        redirect containing the authorization code, then exchanges it for an
+        access token."""
+        if self._driver is None:
+            raise RuntimeError("start_login() must be called before submit_otp().")
+
+        on_status = on_status or (lambda status: None)
+        driver = self._driver
+        By = self._By
+
+        try:
+            otp_field = find_otp_input(driver, By)
+            if otp_field is None:
+                raise RuntimeError("OTP input field is no longer present on the page.")
+            otp_field.send_keys(otp)
+            driver.find_element(By.CLASS_NAME, "lgnBtnClss").click()
 
             on_status("authenticating")
+            return self._finish_from_redirect(driver)
         finally:
-            driver.quit()
+            self.abort()
+
+    def _finish_from_redirect(self, driver):
+        auth_code = None
+        elapsed = 0
+        poll_interval = 1
+        while elapsed < self.REDIRECT_TIMEOUT:
+            self._raise_if_cancelled()
+            query = parse_qs(urlparse(driver.current_url).query)
+            if "code" in query:
+                auth_code = query["code"][0]
+                break
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        if not auth_code:
+            raise TimeoutError("Timed out waiting for the login redirect containing the authorization code.")
 
         return self.exchange_auth_code(auth_code)
+
+    def abort(self):
+        if self._driver is not None:
+            try:
+                self._driver.quit()
+            finally:
+                self._driver = None
 
     def get_headers(self):
         if not self.access_token:
@@ -124,11 +180,28 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
         return {"Authorization": f"Bearer {self.access_token}"}
 
     def authenticate(self, on_status=None):
-        """Always runs the full browser login flow."""
-        return self.login_via_browser(on_status=on_status)
+        """Convenience wrapper for local/console use (see __main__ below):
+        runs the full login flow using the secret's stored user_id, prompting
+        for the password and OTP on the console instead of over the API."""
+        import getpass
+
+        password = getpass.getpass(f"MasterTrust password for {self.user_id}: ")
+        try:
+            otp_required = self.start_login(self.user_id, password, on_status=on_status)
+        finally:
+            password = None
+
+        if not otp_required:
+            return self.access_token
+
+        otp = input("MasterTrust OTP: ")
+        try:
+            return self.submit_otp(otp, on_status=on_status)
+        finally:
+            otp = None
 
 
 if __name__ == "__main__":
     auth = MasterTrustAuthenticator()
     auth.authenticate()
-    print("Access token:", auth.access_token)
+    print("Authenticated. Access token stored in Secrets Manager.")
