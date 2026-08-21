@@ -210,3 +210,22 @@ class TestMasterTrustAuthenticator:
 
         assert driver.get_otp_clicked is True
         assert driver.quit_called is True  # torn down, not left dangling
+
+    def test_submit_otp_raises_quickly_on_rejected_otp_toast(self, monkeypatch):
+        """Regression test: a wrong/expired OTP surfaces the same error
+        toast after the LOGIN click instead of redirecting. submit_otp()
+        must detect it and fail fast, not hang for the full REDIRECT_TIMEOUT
+        (previously 600s) waiting for a redirect that will never come."""
+        _patch_boto3(monkeypatch, MASTERTRUST_SECRET)
+        driver = SinglePageOtpDriver("code", "AUTHCODE", otp_error_text="Invalid OTP")
+        _patch_chrome(monkeypatch, driver)
+
+        from mastertrust import MasterTrustAuthenticator
+
+        auth = MasterTrustAuthenticator()
+        assert auth.start_login("uid", "pwd") is True
+
+        with pytest.raises(InvalidCredentials, match="Invalid OTP"):
+            auth.submit_otp("000000")
+
+        assert driver.quit_called is True

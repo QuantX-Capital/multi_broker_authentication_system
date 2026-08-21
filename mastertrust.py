@@ -16,15 +16,17 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
     TOKEN_URL = "https://midlive.mastertrust.co.in/NorenWClientAPI/GenAcsTok"
 
     CREDENTIALS_TIMEOUT = 20
-    REDIRECT_TIMEOUT = 600
+    REDIRECT_TIMEOUT = 30
     GET_OTP_ERROR_CHECK_TIMEOUT = 10
 
-    # MasterTrust's error toast (e.g. "Invalid User" for a wrong ID/password)
-    # is a Vue-mounted element that exists in the DOM only while it's
-    # showing - it can appear and vanish within a second or two. The
-    # `data-v-*` attribute is Vue's per-build scoped-CSS hash and changes
-    # across deployments; these plain class names are the stable part.
-    GET_OTP_ERROR_TOAST_CSS = ".toastContent.error-toast .toast-text"
+    # MasterTrust's error toast (e.g. "Invalid User" for a wrong ID/password,
+    # or a rejected/expired OTP after the LOGIN click) is a Vue-mounted
+    # element that exists in the DOM only while it's showing - it can
+    # appear and vanish within a second or two. The `data-v-*` attribute is
+    # Vue's per-build scoped-CSS hash and changes across deployments; these
+    # plain class names are the stable part. Reused for both the "Get OTP"
+    # step and the final "LOGIN" step - same toast component either way.
+    ERROR_TOAST_CSS = ".toastContent.error-toast .toast-text"
 
     def __init__(self, secret_id="/trading/brokers/mastertrust/vaibhav", region_name="ap-south-1"):
         super().__init__()
@@ -152,7 +154,7 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
         poll_interval = 0.15
         while elapsed < self.GET_OTP_ERROR_CHECK_TIMEOUT:
             self._raise_if_cancelled()
-            for element in driver.find_elements(By.CSS_SELECTOR, self.GET_OTP_ERROR_TOAST_CSS):
+            for element in driver.find_elements(By.CSS_SELECTOR, self.ERROR_TOAST_CSS):
                 text = (element.text or "").strip()
                 if text:
                     return text
@@ -179,20 +181,29 @@ class MasterTrustAuthenticator(BrokerAuthenticator):
             driver.find_element(By.CLASS_NAME, "lgnBtnClss").click()
 
             on_status("authenticating")
-            return self._finish_from_redirect(driver)
+            return self._finish_from_redirect(driver, By)
         finally:
             self.abort()
 
-    def _finish_from_redirect(self, driver):
+    def _finish_from_redirect(self, driver, By):
+        """Waits for the post-LOGIN redirect containing the authorization
+        code. A rejected OTP (wrong or expired) surfaces as the same error
+        toast used after "Get OTP" instead of a redirect, so this checks for
+        both on every poll tick rather than blindly waiting for a redirect
+        that may never come."""
         auth_code = None
-        elapsed = 0
-        poll_interval = 1
+        elapsed = 0.0
+        poll_interval = 0.5
         while elapsed < self.REDIRECT_TIMEOUT:
             self._raise_if_cancelled()
             query = parse_qs(urlparse(driver.current_url).query)
             if "code" in query:
                 auth_code = query["code"][0]
                 break
+            for element in driver.find_elements(By.CSS_SELECTOR, self.ERROR_TOAST_CSS):
+                text = (element.text or "").strip()
+                if text:
+                    raise InvalidCredentials(f"MasterTrust rejected the OTP/login: {text!r}.")
             time.sleep(poll_interval)
             elapsed += poll_interval
 

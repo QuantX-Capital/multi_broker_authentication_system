@@ -107,6 +107,9 @@ async def submit_auth_otp(broker: str, body: SubmitOtpRequest):
     try:
         try:
             await run_in_threadpool(session.authenticator.submit_otp, otp)
+        except InvalidCredentials:
+            logger.info("submit_otp rejected for broker '%s'", broker_key)
+            raise HTTPException(status_code=401, detail="Invalid or expired OTP.")
         except Exception:
             logger.exception("submit_otp failed for broker '%s'", broker_key)
             raise HTTPException(status_code=502, detail="OTP submission failed.")

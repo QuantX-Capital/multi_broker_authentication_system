@@ -144,20 +144,25 @@ class SinglePageOtpDriver:
     tests exercise.
 
     If `credentials_error_text` is set, a fake error-toast element (matching
-    MasterTrustAuthenticator.GET_OTP_ERROR_TOAST_CSS) becomes findable right
-    after the "Get OTP" click - simulating MasterTrust's Vue-mounted
-    "Invalid User" toast for wrong credentials.
+    MasterTrustAuthenticator.ERROR_TOAST_CSS) becomes findable right after
+    the "Get OTP" click - simulating MasterTrust's Vue-mounted "Invalid
+    User" toast for wrong credentials. If `otp_error_text` is set instead,
+    that same fake toast becomes findable after the LOGIN click (instead of
+    redirecting) - simulating a wrong/expired OTP.
     """
 
     ERROR_TOAST_CSS = ".toastContent.error-toast .toast-text"
 
-    def __init__(self, redirect_query_param, redirect_value, credentials_error_text=None):
+    def __init__(
+        self, redirect_query_param, redirect_value, credentials_error_text=None, otp_error_text=None
+    ):
         self.current_url = "https://broker.example/login"
         self.quit_called = False
         self.get_otp_clicked = False
         self._redirect_query_param = redirect_query_param
         self._redirect_value = redirect_value
         self._credentials_error_text = credentials_error_text
+        self._otp_error_text = otp_error_text
         self._show_credentials_error = False
 
     def get(self, url):
@@ -170,9 +175,11 @@ class SinglePageOtpDriver:
 
     def find_elements(self, by, value):
         if value == self.ERROR_TOAST_CSS:
-            # MasterTrustAuthenticator._wait_for_get_otp_error's lookup.
+            # MasterTrustAuthenticator's toast lookups (both Get-OTP-stage
+            # and post-LOGIN-click stage use this same selector).
             if self._show_credentials_error:
-                return [_RecordingElement(self, text=self._credentials_error_text)]
+                text = self._credentials_error_text or self._otp_error_text
+                return [_RecordingElement(self, text=text)]
             return []
         if value == "getotp":
             return [_RecordingElement(self, on_click=self._handle_get_otp_click)]
@@ -187,6 +194,9 @@ class SinglePageOtpDriver:
             self._show_credentials_error = True
 
     def _handle_login_click(self):
+        if self._otp_error_text:
+            self._show_credentials_error = True
+            return
         self.current_url = (
             f"https://broker.example/callback"
             f"?{self._redirect_query_param}={self._redirect_value}"
@@ -197,7 +207,11 @@ class SinglePageOtpDriver:
 
 
 def make_fake_authenticator_cls(
-    otp_required=True, start_raises=False, start_raises_invalid_credentials=False, otp_raises=False
+    otp_required=True,
+    start_raises=False,
+    start_raises_invalid_credentials=False,
+    otp_raises=False,
+    otp_raises_invalid_credentials=False,
 ):
     """Builds a fake BrokerAuthenticator-shaped class for testing main.py's
     orchestration in isolation from any real broker/Selenium logic. Created
@@ -225,6 +239,8 @@ def make_fake_authenticator_cls(
 
         def submit_otp(self, otp, on_status=None):
             self.seen_otp = otp
+            if otp_raises_invalid_credentials:
+                raise InvalidCredentials("simulated invalid OTP")
             if otp_raises:
                 raise RuntimeError("simulated submit_otp failure")
             self.access_token = "SECRET-TOKEN-SHOULD-NOT-LEAK"

@@ -99,6 +99,17 @@ def test_start_login_invalid_credentials_returns_401_with_clear_detail(client, m
     assert session_manager.pop_session("mastertrust") is None
 
 
+def test_submit_otp_invalid_credentials_returns_401_with_clear_detail(client, monkeypatch):
+    cls = make_fake_authenticator_cls(otp_required=True, otp_raises_invalid_credentials=True)
+    _register(monkeypatch, "mastertrust", cls)
+
+    client.post("/auth/mastertrust/start", json={"user_id": "u1", "password": "p1"})
+    res = client.post("/auth/mastertrust/otp", json={"otp": "000000"})
+
+    assert res.status_code == 401
+    assert res.json() == {"detail": "Invalid or expired OTP."}
+
+
 def test_submit_otp_failure_returns_502(client, monkeypatch):
     cls = make_fake_authenticator_cls(otp_required=True, otp_raises=True)
     _register(monkeypatch, "zerodha", cls)
