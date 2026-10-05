@@ -47,8 +47,7 @@ def test_start_auth_completes_without_otp(client, monkeypatch, broker):
     res = client.post(f"/auth/{broker}/start", json={"user_id": "u1", "password": "p1"})
 
     assert res.status_code == 200
-    assert res.json() == {"status": "authenticated"}
-    assert "SECRET-TOKEN-SHOULD-NOT-LEAK" not in res.text
+    assert res.json() == {"status": "authenticated", "access_token": "SECRET-TOKEN-SHOULD-NOT-LEAK"}
 
 
 @pytest.mark.parametrize("broker", ["zerodha", "mastertrust"])
@@ -60,8 +59,7 @@ def test_submit_otp_completes_authentication(client, monkeypatch, broker):
     res = client.post(f"/auth/{broker}/otp", json={"otp": "123456"})
 
     assert res.status_code == 200
-    assert res.json() == {"status": "authenticated"}
-    assert "SECRET-TOKEN-SHOULD-NOT-LEAK" not in res.text
+    assert res.json() == {"status": "authenticated", "access_token": "SECRET-TOKEN-SHOULD-NOT-LEAK"}
     assert cls.instances[0].seen_otp == "123456"
 
 
@@ -184,16 +182,16 @@ def test_failure_logs_do_not_leak_credentials(client, monkeypatch, caplog):
     assert "AnotherSecret" not in caplog.text
 
 
-def test_access_token_never_appears_in_any_response(client, monkeypatch):
+def test_access_token_only_returned_once_login_completes(client, monkeypatch):
     cls = make_fake_authenticator_cls(otp_required=True)
     _register(monkeypatch, "zerodha", cls)
 
     r1 = client.post("/auth/zerodha/start", json={"user_id": "u1", "password": "p1"})
     r2 = client.post("/auth/zerodha/otp", json={"otp": "123456"})
 
-    for res in (r1, r2):
-        assert "access_token" not in res.json()
-        assert "SECRET-TOKEN-SHOULD-NOT-LEAK" not in res.text
+    assert "access_token" not in r1.json()
+    assert "SECRET-TOKEN-SHOULD-NOT-LEAK" not in r1.text
+    assert r2.json()["access_token"] == "SECRET-TOKEN-SHOULD-NOT-LEAK"
 
 
 def test_list_brokers(client):
@@ -204,7 +202,7 @@ def test_list_brokers(client):
     assert "mastertrust" in brokers
 
 
-def test_authenticated_response_includes_token_saved_at_but_not_token(client, monkeypatch):
+def test_authenticated_response_includes_token_saved_at(client, monkeypatch):
     cls = make_fake_authenticator_cls(otp_required=True)
     cls.token_saved_at = "2026-10-05T09:15:00+00:00"
     _register(monkeypatch, "zerodha", cls)
@@ -215,9 +213,9 @@ def test_authenticated_response_includes_token_saved_at_but_not_token(client, mo
     assert res.status_code == 200
     assert res.json() == {
         "status": "authenticated",
+        "access_token": "SECRET-TOKEN-SHOULD-NOT-LEAK",
         "token_saved_at": "2026-10-05T09:15:00+00:00",
     }
-    assert "SECRET-TOKEN-SHOULD-NOT-LEAK" not in res.text
 
 
 def test_status_reports_token_saved_at(client, monkeypatch):
@@ -229,6 +227,17 @@ def test_status_reports_token_saved_at(client, monkeypatch):
 
     assert res.status_code == 200
     assert res.json() == {"token_saved_at": "2026-10-05T09:15:00+00:00"}
+
+
+def test_status_never_returns_the_access_token(client, monkeypatch):
+    cls = make_fake_authenticator_cls()
+    cls.access_token = "SECRET-TOKEN-SHOULD-NOT-LEAK"
+    _register(monkeypatch, "zerodha", cls)
+
+    res = client.get("/auth/zerodha/status")
+
+    assert "access_token" not in res.json()
+    assert "SECRET-TOKEN-SHOULD-NOT-LEAK" not in res.text
 
 
 def test_status_for_unknown_broker_is_404(client):

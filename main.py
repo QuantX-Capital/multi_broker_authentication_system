@@ -43,10 +43,13 @@ def _authenticator_for(broker: str):
 
 
 def _authenticated_response(authenticator):
-    """Success payload for a completed login. Includes when the broker's
-    access token was saved (if the authenticator tracks it) - never the
-    token itself."""
+    """Success payload for a completed login: the new access token and when
+    it was saved (if the authenticator tracks it). Only returned to the
+    caller who just supplied valid credentials and OTP - /status never
+    exposes the token."""
     response = {"status": "authenticated"}
+    if authenticator.access_token:
+        response["access_token"] = authenticator.access_token
     token_saved_at = getattr(authenticator, "token_saved_at", None)
     if token_saved_at:
         response["token_saved_at"] = token_saved_at
@@ -76,8 +79,8 @@ async def auth_status(broker: str):
 @app.post("/auth/{broker}/start")
 async def start_auth(broker: str, body: StartAuthRequest):
     """Starts a broker login: runs Selenium/Chrome headlessly on the backend
-    and submits the given credentials. The credentials and the broker's
-    access token are never returned to the frontend - only a status."""
+    and submits the given credentials. The credentials are never returned
+    to the frontend; the access token is returned only once login completes."""
     broker_key = broker.lower()
     authenticator_cls = _authenticator_for(broker_key)
     authenticator = authenticator_cls()
@@ -117,7 +120,7 @@ async def start_auth(broker: str, body: StartAuthRequest):
 @app.post("/auth/{broker}/otp")
 async def submit_auth_otp(broker: str, body: SubmitOtpRequest):
     """Completes a broker login started by /start, using the OTP the frontend
-    just collected. The access token is never returned to the frontend."""
+    just collected, and returns the new access token to the caller."""
     broker_key = broker.lower()
     _authenticator_for(broker_key)
 

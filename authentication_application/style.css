@@ -146,6 +146,42 @@ body {
   font-size: 0.78rem;
 }
 
+.token-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.token-value {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.token-action {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.token-action:hover {
+  color: inherit;
+  border-color: var(--accent);
+}
+
 .status-dot {
   width: 7px;
   height: 7px;

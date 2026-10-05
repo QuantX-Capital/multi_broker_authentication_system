@@ -235,6 +235,8 @@ def make_fake_authenticator_cls(
                 raise InvalidCredentials("simulated invalid credentials")
             if start_raises:
                 raise RuntimeError("simulated start_login failure")
+            if not otp_required:
+                self.access_token = "SECRET-TOKEN-SHOULD-NOT-LEAK"
             return otp_required
 
         def submit_otp(self, otp, on_status=None):

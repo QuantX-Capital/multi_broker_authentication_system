@@ -94,6 +94,52 @@ function showTokenSavedAt(broker, isoTimestamp) {
   savedAtEl.textContent = `Token saved ${formatSavedAt(isoTimestamp)}`;
 }
 
+function maskToken(token) {
+  return token.length <= 8 ? "•".repeat(token.length) : `${token.slice(0, 4)}${"•".repeat(12)}${token.slice(-4)}`;
+}
+
+function showAccessToken(broker, token) {
+  const card = document.getElementById(`card-${broker}`);
+  if (!card) return;
+  card.querySelector(".token-box")?.remove();
+
+  const box = document.createElement("div");
+  box.className = "token-box";
+
+  const value = Object.assign(document.createElement("code"), { className: "token-value" });
+  value.textContent = maskToken(token);
+
+  let revealed = false;
+  const toggleBtn = Object.assign(document.createElement("button"), {
+    type: "button",
+    className: "token-action",
+    textContent: "Show",
+  });
+  toggleBtn.addEventListener("click", () => {
+    revealed = !revealed;
+    value.textContent = revealed ? token : maskToken(token);
+    toggleBtn.textContent = revealed ? "Hide" : "Show";
+  });
+
+  const copyBtn = Object.assign(document.createElement("button"), {
+    type: "button",
+    className: "token-action",
+    textContent: "Copy",
+  });
+  copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(token);
+      copyBtn.textContent = "Copied";
+    } catch (err) {
+      copyBtn.textContent = "Copy failed";
+    }
+    setTimeout(() => (copyBtn.textContent = "Copy"), 1500);
+  });
+
+  box.append(value, toggleBtn, copyBtn);
+  card.querySelector(".broker-info").appendChild(box);
+}
+
 async function loadTokenStatus(broker) {
   try {
     const res = await fetch(`/auth/${encodeURIComponent(broker)}/status`);
@@ -197,7 +243,7 @@ credentialsForm.addEventListener("submit", async (event) => {
     updateBrokerCard(broker, "Waiting for OTP…", "busy");
     otpInput.focus();
   } else if (data.status === "authenticated") {
-    succeed(broker, data.token_saved_at);
+    succeed(broker, data.token_saved_at, data.access_token);
   } else {
     fail(broker, `Unexpected status: ${data.status}`);
   }
@@ -234,7 +280,7 @@ otpForm.addEventListener("submit", async (event) => {
   }
 
   if (data.status === "authenticated") {
-    succeed(broker, data.token_saved_at);
+    succeed(broker, data.token_saved_at, data.access_token);
   } else {
     fail(broker, `Unexpected status: ${data.status}`);
   }
@@ -258,8 +304,9 @@ cancelBtn.addEventListener("click", async () => {
   closeModal();
 });
 
-function succeed(broker, tokenSavedAt) {
+function succeed(broker, tokenSavedAt, accessToken) {
   updateBrokerCard(broker, "Authenticated", "success");
+  if (accessToken) showAccessToken(broker, accessToken);
   logEvent(`"${broker}" authenticated successfully.`, "success");
   if (tokenSavedAt) {
     showTokenSavedAt(broker, tokenSavedAt);
