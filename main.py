@@ -42,10 +42,35 @@ def _authenticator_for(broker: str):
     return authenticator_cls
 
 
+def _authenticated_response(authenticator):
+    """Success payload for a completed login. Includes when the broker's
+    access token was saved (if the authenticator tracks it) - never the
+    token itself."""
+    response = {"status": "authenticated"}
+    token_saved_at = getattr(authenticator, "token_saved_at", None)
+    if token_saved_at:
+        response["token_saved_at"] = token_saved_at
+    return response
+
+
 @app.get("/brokers")
 def list_brokers():
     """Returns the broker keys the frontend can offer for authentication."""
     return {"brokers": list(BROKER_REGISTRY)}
+
+
+@app.get("/auth/{broker}/status")
+async def auth_status(broker: str):
+    """Reports when the broker's stored access token was last saved, so the
+    frontend can show it on page load. The token itself is never returned."""
+    broker_key = broker.lower()
+    authenticator_cls = _authenticator_for(broker_key)
+    try:
+        authenticator = await run_in_threadpool(authenticator_cls)
+    except Exception:
+        logger.exception("Could not load stored token status for broker '%s'", broker_key)
+        raise HTTPException(status_code=502, detail="Could not load stored token status.")
+    return {"token_saved_at": getattr(authenticator, "token_saved_at", None)}
 
 
 @app.post("/auth/{broker}/start")
@@ -72,7 +97,7 @@ async def start_auth(broker: str, body: StartAuthRequest):
             raise HTTPException(status_code=502, detail="Broker login could not be started.")
 
         if not otp_required:
-            return {"status": "authenticated"}
+            return _authenticated_response(authenticator)
 
         try:
             session_manager.start_session(broker_key, authenticator)
@@ -114,7 +139,7 @@ async def submit_auth_otp(broker: str, body: SubmitOtpRequest):
             logger.exception("submit_otp failed for broker '%s'", broker_key)
             raise HTTPException(status_code=502, detail="OTP submission failed.")
 
-        return {"status": "authenticated"}
+        return _authenticated_response(session.authenticator)
     finally:
         otp = None
         body.otp = None

@@ -81,6 +81,8 @@ class TestZerodhaAuthenticator:
         assert auth.access_token == "ACCESS1"
         assert driver.quit_called is True
         assert client.put_calls[-1]["access_token"] == "ACCESS1"
+        assert client.put_calls[-1]["token_saved_at"]
+        assert auth.token_saved_at == client.put_calls[-1]["token_saved_at"]
 
     def test_start_login_without_otp_completes_immediately(self, monkeypatch):
         _patch_boto3(monkeypatch, ZERODHA_SECRET)

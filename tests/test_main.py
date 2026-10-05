@@ -202,3 +202,34 @@ def test_list_brokers(client):
     brokers = res.json()["brokers"]
     assert "zerodha" in brokers
     assert "mastertrust" in brokers
+
+
+def test_authenticated_response_includes_token_saved_at_but_not_token(client, monkeypatch):
+    cls = make_fake_authenticator_cls(otp_required=True)
+    cls.token_saved_at = "2026-10-05T09:15:00+00:00"
+    _register(monkeypatch, "zerodha", cls)
+
+    client.post("/auth/zerodha/start", json={"user_id": "u1", "password": "p1"})
+    res = client.post("/auth/zerodha/otp", json={"otp": "123456"})
+
+    assert res.status_code == 200
+    assert res.json() == {
+        "status": "authenticated",
+        "token_saved_at": "2026-10-05T09:15:00+00:00",
+    }
+    assert "SECRET-TOKEN-SHOULD-NOT-LEAK" not in res.text
+
+
+def test_status_reports_token_saved_at(client, monkeypatch):
+    cls = make_fake_authenticator_cls()
+    cls.token_saved_at = "2026-10-05T09:15:00+00:00"
+    _register(monkeypatch, "zerodha", cls)
+
+    res = client.get("/auth/zerodha/status")
+
+    assert res.status_code == 200
+    assert res.json() == {"token_saved_at": "2026-10-05T09:15:00+00:00"}
+
+
+def test_status_for_unknown_broker_is_404(client):
+    assert client.get("/auth/unknownbroker/status").status_code == 404

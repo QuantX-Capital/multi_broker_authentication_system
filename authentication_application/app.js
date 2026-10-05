@@ -70,9 +70,38 @@ async function loadBrokers() {
     const res = await fetch("/brokers");
     if (!res.ok) throw new Error(`Failed to load brokers (${res.status})`);
     const data = await res.json();
-    renderBrokers(data.brokers || []);
+    const brokers = data.brokers || [];
+    renderBrokers(brokers);
+    brokers.forEach(loadTokenStatus);
   } catch (err) {
     brokerListEl.innerHTML = `<p class="status-line error">${err.message}</p>`;
+  }
+}
+
+function formatSavedAt(isoTimestamp) {
+  const date = new Date(isoTimestamp);
+  return Number.isNaN(date.getTime()) ? isoTimestamp : date.toLocaleString();
+}
+
+function showTokenSavedAt(broker, isoTimestamp) {
+  const card = document.getElementById(`card-${broker}`);
+  if (!card) return;
+  let savedAtEl = card.querySelector(".token-saved-at");
+  if (!savedAtEl) {
+    savedAtEl = Object.assign(document.createElement("p"), { className: "token-saved-at" });
+    card.querySelector(".broker-info").appendChild(savedAtEl);
+  }
+  savedAtEl.textContent = `Token saved ${formatSavedAt(isoTimestamp)}`;
+}
+
+async function loadTokenStatus(broker) {
+  try {
+    const res = await fetch(`/auth/${encodeURIComponent(broker)}/status`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.token_saved_at) showTokenSavedAt(broker, data.token_saved_at);
+  } catch (err) {
+    // non-critical - the card just won't show a saved-at time
   }
 }
 
@@ -168,7 +197,7 @@ credentialsForm.addEventListener("submit", async (event) => {
     updateBrokerCard(broker, "Waiting for OTP…", "busy");
     otpInput.focus();
   } else if (data.status === "authenticated") {
-    succeed(broker);
+    succeed(broker, data.token_saved_at);
   } else {
     fail(broker, `Unexpected status: ${data.status}`);
   }
@@ -205,7 +234,7 @@ otpForm.addEventListener("submit", async (event) => {
   }
 
   if (data.status === "authenticated") {
-    succeed(broker);
+    succeed(broker, data.token_saved_at);
   } else {
     fail(broker, `Unexpected status: ${data.status}`);
   }
@@ -229,9 +258,13 @@ cancelBtn.addEventListener("click", async () => {
   closeModal();
 });
 
-function succeed(broker) {
+function succeed(broker, tokenSavedAt) {
   updateBrokerCard(broker, "Authenticated", "success");
   logEvent(`"${broker}" authenticated successfully.`, "success");
+  if (tokenSavedAt) {
+    showTokenSavedAt(broker, tokenSavedAt);
+    logEvent(`"${broker}" access token saved at ${formatSavedAt(tokenSavedAt)}.`, "success");
+  }
   setBrokerButtonsDisabled(false);
   closeModal();
 }

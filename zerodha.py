@@ -1,6 +1,7 @@
 import json
 import hashlib
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlparse, parse_qs
 
 import boto3
@@ -30,6 +31,7 @@ class ZerodhaAuthenticator(BrokerAuthenticator):
         self.redirect_url = secret.get("redirect_url")
         self.access_token = secret.get("access_token") or None
         self.user_id = secret.get("user_id")
+        self.token_saved_at = secret.get("token_saved_at")
 
         self._driver = None
 
@@ -40,10 +42,12 @@ class ZerodhaAuthenticator(BrokerAuthenticator):
     def _update_secret(self, access_token):
         secret = self._get_secret()
         secret["access_token"] = access_token
+        secret["token_saved_at"] = datetime.now(timezone.utc).isoformat()
         self.client.put_secret_value(
             SecretId=self.secret_id,
             SecretString=json.dumps(secret),
         )
+        self.token_saved_at = secret["token_saved_at"]
 
     def get_login_url(self):
         return self.LOGIN_URL.format(api_key=self.api_key)
